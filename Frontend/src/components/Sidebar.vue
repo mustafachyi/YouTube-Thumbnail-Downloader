@@ -25,14 +25,16 @@ const loadPreviousDownload = (videoId) => {
 
 <template>
   <div :class="[
-    'fixed md:static inset-y-[40px] md:inset-y-0 left-0 w-64 bg-vscode-sidebar border-r border-vscode-border flex-shrink-0 transform transition-transform duration-200 ease-in-out h-[calc(100vh-40px)] md:h-auto overflow-y-auto z-30',
+    'fixed md:static inset-y-[40px] md:inset-y-0 left-0 w-64 bg-vscode-sidebar border-r border-vscode-border flex-shrink-0 h-[calc(100vh-40px)] md:h-auto overflow-y-auto z-30',
+    'will-change-transform',
     !isOpen && '-translate-x-full md:translate-x-0'
-  ]">
+  ]"
+  style="transition: transform 0.15s ease-out;">
     <div class="p-4 h-full">
       <div class="space-y-4">
         <div class="flex items-center justify-between">
           <h2 class="text-sm font-medium text-vscode-text/60 uppercase tracking-wider">Quick Links</h2>
-          <a href="https://github.com/mustafachyi" 
+          <a href="https://github.com/mustafachyi/YouTube-Thumbnail-Downloader" 
              target="_blank"
              rel="noopener noreferrer" 
              class="flex items-center space-x-1 text-xs px-2 py-1 rounded-md bg-vscode-active hover:bg-opacity-80 transition-colors">
@@ -95,7 +97,8 @@ const loadPreviousDownload = (videoId) => {
 <style scoped>
 .list-enter-active,
 .list-leave-active {
-  transition: all 0.3s ease;
+  transition: all 0.2s ease;
+  will-change: transform, opacity;
 }
 .list-enter-from {
   opacity: 0;

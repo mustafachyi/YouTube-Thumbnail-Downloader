@@ -14,7 +14,7 @@ const toggleSidebar = () => {
   sidebarOpen.value = !sidebarOpen.value
   setTimeout(() => {
     isToggling.value = false
-  }, 200) // Match the transition duration in Sidebar component
+  }, 150) // Reduced from 200ms
 }
 
 const handleLoadPrevious = (url) => {
@@ -65,16 +65,16 @@ onUnmounted(() => {
     
     <div class="flex min-h-screen pt-[40px]">
       <Transition
-        enter-active-class="transition-opacity duration-200"
+        enter-active-class="transition-opacity duration-150"
         enter-from-class="opacity-0"
         enter-to-class="opacity-100"
-        leave-active-class="transition-opacity duration-200"
+        leave-active-class="transition-opacity duration-150"
         leave-from-class="opacity-100"
         leave-to-class="opacity-0"
       >
         <div
           v-if="sidebarOpen && isMobile"
-          class="fixed inset-0 bg-black/50 backdrop-blur-sm z-10"
+          class="fixed inset-0 bg-black/40 z-10"
           @click="handleOverlayClick"
         ></div>
       </Transition>
@@ -86,7 +86,6 @@ onUnmounted(() => {
 
 <style scoped>
 .backdrop-blur-sm {
-  -webkit-backdrop-filter: blur(4px);
-  backdrop-filter: blur(4px);
+  display: none;
 }
 </style>
