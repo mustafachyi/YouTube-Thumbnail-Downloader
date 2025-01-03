@@ -1,20 +1,36 @@
 <script setup>
-import { ref, onMounted, onUnmounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed, shallowRef } from 'vue'
 import TopBar from './components/TopBar.vue'
 import Sidebar from './components/Sidebar.vue'
 import MainContent from './components/MainContent.vue'
 
-const sidebarOpen = ref(window.innerWidth >= 768)
-const mainContentRef = ref(null)
+// Use shallowRef for DOM references
+const mainContentRef = shallowRef(null)
+
+// Memoize computed values
+const isMobile = computed(() => window.innerWidth < 768)
+const sidebarOpen = ref(isMobile.value ? false : true)
 const isToggling = ref(false)
 
+// Debounced resize handler
+let resizeTimeout
+const handleResize = () => {
+  if (resizeTimeout) clearTimeout(resizeTimeout)
+  resizeTimeout = setTimeout(() => {
+    sidebarOpen.value = window.innerWidth >= 768
+  }, 100)
+}
+
+// Optimized toggle with requestAnimationFrame
 const toggleSidebar = () => {
   if (isToggling.value) return
   isToggling.value = true
-  sidebarOpen.value = !sidebarOpen.value
-  setTimeout(() => {
-    isToggling.value = false
-  }, 150) // Reduced from 200ms
+  requestAnimationFrame(() => {
+    sidebarOpen.value = !sidebarOpen.value
+    setTimeout(() => {
+      isToggling.value = false
+    }, 150)
+  })
 }
 
 const handleLoadPrevious = (url) => {
@@ -23,39 +39,20 @@ const handleLoadPrevious = (url) => {
   }
 }
 
-const handleResize = () => {
-  sidebarOpen.value = window.innerWidth >= 768
-}
-
-const isMobile = computed(() => window.innerWidth < 768)
-
 const handleOverlayClick = (e) => {
   if (isMobile.value && sidebarOpen.value) {
     toggleSidebar()
   }
 }
 
+// Lifecycle hooks
 onMounted(() => {
-  window.addEventListener('resize', handleResize)
-  
-  // VS Code themed console message
-  const vsStyle = 'background: #1e1e1e; color: #569CD6; padding: 12px; font-size: 14px; font-family: monospace; border: 1px solid #264F78;'
-  const linkStyle = 'color: #4EC9B0; text-decoration: underline;'
-  
-  console.log('%c[INFO] YouTube Thumbnail Downloader', vsStyle)
-  console.log(`%c[APP] Ready to download thumbnails\n[GITHUB] https://github.com/mustafachyi%c`, 'color: #9CDCFE; font-family: monospace;', linkStyle)
-
-  console.log(`%c
-  ┌─────────────────────────────┐
-  │  Thumbnail Downloader v1.0  │
-  │  =====================      │
-  │  Ready to extract images    │
-  │  from YouTube videos        │
-  └─────────────────────────────┘`, 'color: #569CD6; font-family: monospace;')
+  window.addEventListener('resize', handleResize, { passive: true })
 })
 
 onUnmounted(() => {
   window.removeEventListener('resize', handleResize)
+  if (resizeTimeout) clearTimeout(resizeTimeout)
 })
 </script>
 
@@ -73,19 +70,42 @@ onUnmounted(() => {
         leave-to-class="opacity-0"
       >
         <div
-          v-if="sidebarOpen && isMobile"
+          v-show="sidebarOpen && isMobile"
           class="fixed inset-0 bg-black/40 z-10"
           @click="handleOverlayClick"
         ></div>
       </Transition>
-      <Sidebar :is-open="sidebarOpen" @load-previous="handleLoadPrevious" />
-      <MainContent ref="mainContentRef" :sidebar-open="sidebarOpen" />
+      
+      <Sidebar 
+        :is-open="sidebarOpen" 
+        @load-previous="handleLoadPrevious"
+        :style="{
+          transform: sidebarOpen ? 'translateX(0)' : 'translateX(-100%)',
+          willChange: isToggling ? 'transform' : 'auto'
+        }"
+      />
+      <MainContent 
+        ref="mainContentRef" 
+        :sidebar-open="sidebarOpen" 
+      />
     </div>
   </div>
 </template>
 
-<style scoped>
-.backdrop-blur-sm {
-  display: none;
+<style>
+/* Use hardware acceleration for animations */
+.v-enter-active,
+.v-leave-active {
+  will-change: opacity;
+  backface-visibility: hidden;
+  transform: translateZ(0);
+}
+
+/* Optimize transitions */
+@media (prefers-reduced-motion: reduce) {
+  .v-enter-active,
+  .v-leave-active {
+    transition-duration: 0.1s;
+  }
 }
 </style>

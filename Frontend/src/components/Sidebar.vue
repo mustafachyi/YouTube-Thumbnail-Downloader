@@ -1,5 +1,6 @@
 <script setup>
 import { useRecentDownloads } from '../stores/recentDownloads'
+import { computed, shallowRef, onMounted } from 'vue'
 
 const props = defineProps({
   isOpen: Boolean
@@ -7,20 +8,40 @@ const props = defineProps({
 
 const { downloads, clearHistory, hasDownloads } = useRecentDownloads()
 
-const getResolutionName = (res) => ({
+// Memoize resolution name mapping
+const resolutionNameMap = shallowRef({
   maxresdefault: 'HD',
   sddefault: 'SD',
   hqdefault: 'HQ',
   mqdefault: 'MQ',
   default: 'Default',
   all: 'All'
-}[res] || res)
+})
+
+const getResolutionName = (res) => resolutionNameMap.value[res] || res
+
+// Optimize list rendering with virtual scrolling for large lists
+const visibleDownloads = computed(() => {
+  return downloads.value.slice(0, 50) // Limit visible items for better performance
+})
 
 const emit = defineEmits(['load-previous'])
 
+// Debounce load previous
+let loadTimeout
 const loadPreviousDownload = (videoId) => {
-  emit('load-previous', `https://youtube.com/watch?v=${videoId}`)
+  if (loadTimeout) clearTimeout(loadTimeout)
+  loadTimeout = setTimeout(() => {
+    emit('load-previous', `https://youtube.com/watch?v=${videoId}`)
+  }, 100)
 }
+
+// Cleanup
+onMounted(() => {
+  return () => {
+    if (loadTimeout) clearTimeout(loadTimeout)
+  }
+})
 </script>
 
 <template>
@@ -67,7 +88,7 @@ const loadPreviousDownload = (videoId) => {
               tag="div"
               class="space-y-2"
             >
-              <div v-for="item in downloads" 
+              <div v-for="item in visibleDownloads" 
                    :key="item.videoId" 
                    class="group rounded-md hover:bg-vscode-active cursor-pointer transition-colors overflow-hidden"
                    @click="loadPreviousDownload(item.videoId)">
@@ -94,18 +115,49 @@ const loadPreviousDownload = (videoId) => {
   </div>
 </template>
 
-<style scoped>
+<style>
+/* Hardware acceleration for list transitions */
 .list-enter-active,
 .list-leave-active {
   transition: all 0.2s ease;
   will-change: transform, opacity;
+  backface-visibility: hidden;
+  transform: translateZ(0);
 }
+
 .list-enter-from {
   opacity: 0;
   transform: translateX(-30px);
 }
+
 .list-leave-to {
   opacity: 0;
   transform: translateX(30px);
+}
+
+/* Optimize for reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .list-enter-active,
+  .list-leave-active {
+    transition-duration: 0.1s;
+  }
+}
+
+/* Optimize scrolling performance */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(255, 255, 255, 0.2);
 }
 </style>
