@@ -2,14 +2,94 @@
 @tailwind components;
 @tailwind utilities;
 
-@layer utilities {
-  .fade-enter-active,
-  .fade-leave-active {
-    transition-duration: 150ms;
+@layer base {
+  /* Global performance optimizations */
+  img {
+    image-rendering: optimizeQuality;
+    -webkit-backface-visibility: hidden;
+    backface-visibility: hidden;
   }
-  
-  .fade-enter-from,
-  .fade-leave-to {
+
+  button {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  svg {
+    shape-rendering: geometricPrecision;
+    text-rendering: optimizeLegibility;
+  }
+}
+
+@layer components {
+  /* TopBar styles */
+  .topbar-base {
+    transform: translateZ(0);
+    backface-visibility: hidden;
+    will-change: transform;
+  }
+
+  /* Sidebar styles */
+  .sidebar-scrollbar::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  .sidebar-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .sidebar-scrollbar::-webkit-scrollbar-thumb {
+    background-color: rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+  }
+
+  .sidebar-scrollbar::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(255, 255, 255, 0.2);
+  }
+}
+
+@layer utilities {
+  /* Vue transitions */
+  .v-enter-active,
+  .v-leave-active,
+  .list-enter-active,
+  .list-leave-active {
+    transition: all 0.2s ease;
+    will-change: transform, opacity;
+    backface-visibility: hidden;
+    transform: translateZ(0);
+  }
+
+  .v-enter-from,
+  .v-leave-to {
     opacity: 0;
+  }
+
+  .list-enter-from {
+    opacity: 0;
+    transform: translateX(-30px);
+  }
+
+  .list-leave-to {
+    opacity: 0;
+    transform: translateX(30px);
+  }
+
+  /* Reduced motion preferences */
+  @media (prefers-reduced-motion: reduce) {
+    .v-enter-active,
+    .v-leave-active,
+    .list-enter-active,
+    .list-leave-active,
+    .transition-all {
+      transition-duration: 0.1s !important;
+    }
+  }
+
+  /* High contrast mode */
+  @media (forced-colors: active) {
+    .topbar-base {
+      forced-color-adjust: none;
+    }
   }
 }

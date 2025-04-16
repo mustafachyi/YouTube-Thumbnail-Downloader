@@ -1,51 +1,60 @@
 <script setup>
+// External imports
 import { ref, onMounted, onUnmounted, computed, shallowRef } from 'vue'
+
+// Internal imports
 import TopBar from './components/TopBar.vue'
 import Sidebar from './components/Sidebar.vue'
 import MainContent from './components/MainContent.vue'
 
-// Use shallowRef for DOM references
+// App constants
+const TRANSITION_DURATION = 350
+const MOBILE_BREAKPOINT = 768
+
+// DOM references using shallowRef for better performance
 const mainContentRef = shallowRef(null)
 
-// Memoize computed values
-const isMobile = computed(() => window.innerWidth < 768)
-const sidebarOpen = ref(isMobile.value ? false : true)
+// Reactive state
+const isMobile = computed(() => window.innerWidth < MOBILE_BREAKPOINT)
+const sidebarOpen = ref(!isMobile.value)
 const isToggling = ref(false)
 
-// Debounced resize handler
+// Handle window resize with debouncing
 let resizeTimeout
 const handleResize = () => {
   if (resizeTimeout) clearTimeout(resizeTimeout)
+  
   resizeTimeout = setTimeout(() => {
-    sidebarOpen.value = window.innerWidth >= 768
+    // Only update sidebar state when transitioning between breakpoints
+    const currentIsMobile = window.innerWidth < MOBILE_BREAKPOINT
+    if (currentIsMobile !== isMobile.value) {
+      sidebarOpen.value = !currentIsMobile
+    }
   }, 100)
 }
 
-// Optimized toggle with requestAnimationFrame
+// Toggle sidebar with transition lock to prevent multiple toggles
 const toggleSidebar = () => {
   if (isToggling.value) return
+  
   isToggling.value = true
-  requestAnimationFrame(() => {
-    sidebarOpen.value = !sidebarOpen.value
-    setTimeout(() => {
-      isToggling.value = false
-    }, 150)
-  })
+  sidebarOpen.value = !sidebarOpen.value
+  setTimeout(() => isToggling.value = false, TRANSITION_DURATION)
 }
 
+// Load URL from sidebar history
 const handleLoadPrevious = (url) => {
-  if (mainContentRef.value) {
-    mainContentRef.value.loadUrl(url)
-  }
+  mainContentRef.value?.loadUrl(url)
 }
 
-const handleOverlayClick = (e) => {
+// Close sidebar when clicking overlay on mobile
+const handleOverlayClick = () => {
   if (isMobile.value && sidebarOpen.value) {
     toggleSidebar()
   }
 }
 
-// Lifecycle hooks
+// Lifecycle hooks for event listeners
 onMounted(() => {
   window.addEventListener('resize', handleResize, { passive: true })
 })
@@ -57,55 +66,55 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="bg-vscode-bg text-vscode-text min-h-screen">
-    <TopBar @toggle-sidebar="toggleSidebar" />
+  <div class="bg-vscode-bg text-vscode-text min-h-screen flex flex-col">
+    <!-- Header with fixed position -->
+    <header role="banner" class="fixed top-0 left-0 right-0 z-50">
+      <TopBar @toggle-sidebar="toggleSidebar" />
+    </header>
     
-    <div class="flex min-h-screen pt-[40px]">
+    <!-- Main Content Area -->
+    <div class="flex flex-1 pt-[40px] relative">
+      <!-- Mobile Overlay (shown only when sidebar is open on mobile) -->
       <Transition
-        enter-active-class="transition-opacity duration-150"
+        enter-active-class="transition-opacity duration-300"
         enter-from-class="opacity-0"
         enter-to-class="opacity-100"
-        leave-active-class="transition-opacity duration-150"
+        leave-active-class="transition-opacity duration-300"
         leave-from-class="opacity-100"
-        leave-to-class="opacity-0"
-      >
-        <div
-          v-show="sidebarOpen && isMobile"
-          class="fixed inset-0 bg-black/40 z-10"
-          @click="handleOverlayClick"
-        ></div>
+        leave-to-class="opacity-0">
+        <div v-if="sidebarOpen && isMobile"
+             class="fixed inset-0 bg-black/40 z-20"
+             @click="handleOverlayClick">
+        </div>
       </Transition>
       
-      <Sidebar 
-        :is-open="sidebarOpen" 
-        @load-previous="handleLoadPrevious"
-        :style="{
-          transform: sidebarOpen ? 'translateX(0)' : 'translateX(-100%)',
-          willChange: isToggling ? 'transform' : 'auto'
-        }"
-      />
-      <MainContent 
-        ref="mainContentRef" 
-        :sidebar-open="sidebarOpen" 
-      />
+      <!-- Sidebar with slide animation -->
+      <Transition
+        enter-active-class="transition-transform duration-300 ease-out"
+        enter-from-class="transform -translate-x-full"
+        enter-to-class="transform translate-x-0"
+        leave-active-class="transition-transform duration-300 ease-in"
+        leave-from-class="transform translate-x-0"
+        leave-to-class="transform -translate-x-full">
+        <aside v-if="sidebarOpen || !isMobile" 
+               role="complementary" 
+               aria-label="Sidebar" 
+               class="fixed md:sticky top-[40px] left-0 bottom-0 z-30">
+          <Sidebar :is-open="sidebarOpen" 
+                  @load-previous="handleLoadPrevious" />
+        </aside>
+      </Transition>
+
+      <!-- Main Content with responsive margin -->
+      <main role="main" 
+            class="flex-1 min-h-[calc(100vh-40px)] transition-all duration-300">
+        <h1 class="sr-only">YouTube Thumbnail Downloader</h1>
+        <MainContent ref="mainContentRef" />
+      </main>
     </div>
   </div>
 </template>
 
 <style>
-/* Use hardware acceleration for animations */
-.v-enter-active,
-.v-leave-active {
-  will-change: opacity;
-  backface-visibility: hidden;
-  transform: translateZ(0);
-}
-
-/* Optimize transitions */
-@media (prefers-reduced-motion: reduce) {
-  .v-enter-active,
-  .v-leave-active {
-    transition-duration: 0.1s;
-  }
-}
+/* Styles removed as they are likely covered by global styles in src/style.css */
 </style>

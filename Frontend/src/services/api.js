@@ -1,70 +1,91 @@
-const isDevelopment = false // Toggle this off when deploying
+// API configuration
+const isDevelopment = false // Toggle for production
 const baseURL = isDevelopment ? 'http://localhost:3000' : ''
-
-const handleResponse = async (response) => {
-  if (!response.ok) {
-    const error = await response.json()
-    throw new Error(error.message || 'API request failed')
-  }
-  return response
-}
-
-// Optimize headers - keep only essential headers
-const defaultHeaders = {
+const DEFAULT_HEADERS = {
   'Content-Type': 'application/json',
   'Accept-Encoding': 'br, gzip, deflate'
 }
 
-export const checkThumbnailAvailability = async (videoUrl) => {
-  const response = await fetch(`${baseURL}/api/check-availability`, {
-    method: 'POST',
-    credentials: 'include',
-    headers: defaultHeaders,
-    body: JSON.stringify({ videoUrl })
-  })
-  return handleResponse(response).then(r => r.json())
+// Response handler with error checking
+const handleResponse = async (response) => {
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}))
+    throw new Error(error.message || `API request failed with status ${response.status}`)
+  }
+  return response
 }
 
+// Check available thumbnail resolutions
+export const checkThumbnailAvailability = async (videoUrl) => {
+  try {
+    const response = await fetch(`${baseURL}/api/check-availability`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: DEFAULT_HEADERS,
+      body: JSON.stringify({ videoUrl })
+    })
+    return handleResponse(response).then(r => r.json())
+  } catch (error) {
+    console.error('Availability check failed:', error)
+    throw error
+  }
+}
+
+// Get and preload thumbnail URL
 export const getThumbnailUrl = (videoId, resolution) => {
   const url = `https://img.youtube.com/vi/${videoId}/${resolution}.jpg`
-  // Preload image for better performance
-  new Image().src = url
+  if (typeof window !== 'undefined') {
+    new Image().src = url // Preload image
+  }
   return url
 }
 
+// Download thumbnail with specified resolution
 export const downloadThumbnail = async (videoUrl, resolution, availabilityData) => {
-  const response = await fetch(`${baseURL}/api/download`, {
-    method: 'POST',
-    credentials: 'include',
-    headers: {
-      ...defaultHeaders,
-      'Accept': 'application/zip,image/jpeg'
-    },
-    body: JSON.stringify({ videoUrl, resolution, availabilityData })
-  })
-  
-  if (!response.ok) {
-    const error = await response.json()
-    throw new Error(error.message || 'Download failed')
+  try {
+    const response = await fetch(`${baseURL}/api/download`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        ...DEFAULT_HEADERS,
+        'Accept': 'application/zip,image/jpeg'
+      },
+      body: JSON.stringify({ videoUrl, resolution, availabilityData })
+    })
+    
+    await handleResponse(response)
+    const blob = await response.blob()
+    
+    // Extract filename from headers or use default
+    const contentDisposition = response.headers.get('Content-Disposition')
+    const filename = contentDisposition?.split('filename=')[1]?.replace(/"/g, '') 
+      || `thumbnail${resolution === 'all' ? '.zip' : '.jpg'}`
+
+    // Create download link and trigger
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    link.style.display = 'none'
+    document.body.appendChild(link)
+    link.click()
+    
+    // Clean up resources efficiently
+    if ('requestIdleCallback' in window) {
+      requestIdleCallback(() => cleanupDownload(url, link))
+    } else {
+      setTimeout(() => cleanupDownload(url, link), 100)
+    }
+
+    return blob
+  } catch (error) {
+    console.error('Download failed:', error)
+    throw error
   }
+}
 
-  const blob = await response.blob()
-  const filename = response.headers.get('Content-Disposition')?.split('filename=')[1]?.replace(/"/g, '') 
-    || `thumbnail${resolution === 'all' ? '.zip' : '.jpg'}`
-
-  // Use URL.createObjectURL only when needed
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  document.body.appendChild(a)
-  a.click()
-  
-  // Use requestIdleCallback for cleanup to avoid blocking the main thread
-  requestIdleCallback(() => {
-    URL.revokeObjectURL(url)
-    document.body.removeChild(a)
-  })
-
-  return blob
+// Helper function for download cleanup
+const cleanupDownload = (url, link) => {
+  URL.revokeObjectURL(url)
+  document.body.removeChild(link)
 }

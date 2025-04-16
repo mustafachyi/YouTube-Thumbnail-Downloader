@@ -1,10 +1,7 @@
-const fastify = require('fastify')({ 
-  logger: true,
-  trustProxy: true
-});
+const fastify = require('fastify')({ logger: true, trustProxy: true });
 const { pipeline } = require('stream');
 const { promisify } = require('util');
-const { request } = require('undici');
+const { request, Agent } = require('undici');
 const fs = require('fs');
 const path = require('path');
 const { URL } = require('url');
@@ -17,72 +14,61 @@ const { Readable } = require('stream');
 
 const pipelineAsync = promisify(pipeline);
 
-// Supported YouTube thumbnail quality options
+// Thumbnail Agent
+const thumbnailAgent = new Agent({
+  connect: {
+    timeout: 1000,
+    keepAlive: true,
+    keepAliveTimeout: 30000,
+  },
+  connections: 8,
+  pipelining: 1,
+  keepAliveTimeout: 30000,
+  keepAliveMaxTimeout: 30000,
+});
+
+// Constants
 const VALID_RESOLUTIONS = ['maxresdefault', 'sddefault', 'hqdefault', 'mqdefault', 'default'];
 const MAX_REQUESTS = 100;
 const TIME_WINDOW = '1 minute';
 const YOUTUBE_DOMAINS = new Set(['youtube.com', 'youtu.be']);
 const VIDEO_ID_REGEX = /^[A-Za-z0-9_-]{11}$/;
 
-// Add compression before other plugins
-fastify.register(fastifyCompress, {
-  encodings: ['br', 'gzip', 'deflate']
-});
-
-// CORS configuration
+// Middleware
+fastify.register(fastifyCompress, { encodings: ['br', 'gzip', 'deflate'] });
 fastify.register(fastifyCors, {
-  origin: true, // Allow all origins since we're serving frontend from same origin
+  origin: true,
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Accept-Encoding'],
   exposedHeaders: ['Content-Disposition'],
   credentials: true,
   maxAge: 86400
 });
-
-fastify.register(fastifyRateLimit, {
-  max: MAX_REQUESTS,
-  timeWindow: TIME_WINDOW
-});
-
-// Serve static files from public directory
+fastify.register(fastifyRateLimit, { max: MAX_REQUESTS, timeWindow: TIME_WINDOW });
 fastify.register(fastifyStatic, {
   root: path.join(__dirname, 'public'),
-  prefix: '/'
+  prefix: '/',
+  acceptRanges: true,
+  preCompressed: true,
+  index: ['index.html', 'index.htm']
 });
 
-// Handle SPA routing by serving index.html for all non-API routes
-fastify.setNotFoundHandler((request, reply) => {
-  if (request.url.startsWith('/api/')) {
-    reply.code(404).send({ error: 'API endpoint not found' });
-    return;
-  }
-  reply.sendFile('index.html');
-});
-
-// Extract video ID from various YouTube URL formats
+// Extracts video ID from various YouTube URL formats
 const getVideoId = (url) => {
   try {
     const urlObj = new URL(url);
     const hostname = urlObj.hostname.replace(/^(www\.|m\.)/, '');
-    const pathname = urlObj.pathname;
 
     if (!YOUTUBE_DOMAINS.has(hostname)) return null;
+    if (hostname === 'youtu.be') return urlObj.pathname.slice(1).split('&')[0];
 
-    if (hostname === 'youtu.be') {
-      return pathname.slice(1).split('&')[0];
-    }
+    const patterns = new Map([
+      ['/e/', 3], ['/live/', 6], ['/shorts/', 8], ['/embed/', 7]
+    ]);
 
-    const patterns = {
-      '/e/': 3,
-      '/live/': 6,
-      '/shorts/': 8,
-      '/embed/': 7
-    };
-
-    for (const [prefix, skip] of Object.entries(patterns)) {
-      if (pathname.startsWith(prefix)) {
-        return pathname.slice(skip).split('?')[0];
-      }
+    const pathname = urlObj.pathname;
+    for (const [prefix, skip] of patterns) {
+      if (pathname.startsWith(prefix)) return pathname.slice(skip).split('?')[0];
     }
 
     return urlObj.searchParams.get('v') || null;
@@ -91,48 +77,85 @@ const getVideoId = (url) => {
   }
 };
 
-// Verify URL is valid YouTube link with proper video ID
 const isValidYouTubeUrl = (url) => {
   const videoId = getVideoId(url);
   return videoId !== null && VIDEO_ID_REGEX.test(videoId);
 };
 
-// Check if specific resolution thumbnail exists
 const checkThumbnailAvailability = async (videoId, resolution) => {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 1000);
+  
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 1000);
-    
-    const response = await fetch(`https://img.youtube.com/vi/${videoId}/${resolution}.jpg`, {
+    const { statusCode } = await request(`https://img.youtube.com/vi/${videoId}/${resolution}.jpg`, {
       method: 'HEAD',
       signal: controller.signal,
-      headers: { 'User-Agent': 'YouTube-Thumbnail-Downloader/1.0' }
+      headers: { 
+        'User-Agent': 'YouTube-Thumbnail-Downloader/1.0',
+        'Accept': 'image/jpeg',
+        'Connection': 'keep-alive'
+      },
+      dispatcher: thumbnailAgent
     });
-    
-    clearTimeout(timeout);
-    return response.ok;
+    return statusCode === 200;
   } catch {
     return false;
+  } finally {
+    clearTimeout(timeout);
   }
 };
 
-// Get all available thumbnail resolutions for video
-const checkAllResolutions = async (videoId) => {
-  const checks = await Promise.allSettled(
-    VALID_RESOLUTIONS.map(async resolution => {
-      const isAvailable = await checkThumbnailAvailability(videoId, resolution);
-      return [resolution, isAvailable];
-    })
-  );
-
-  return Object.fromEntries(
-    checks
-      .filter(result => result.status === 'fulfilled')
-      .map(result => result.value)
-  );
+const checkResolutionPair = async (videoId, [res1, res2]) => {
+  const [result1, result2] = await Promise.all([
+    res1 ? checkThumbnailAvailability(videoId, res1) : Promise.resolve(false),
+    res2 ? checkThumbnailAvailability(videoId, res2) : Promise.resolve(false)
+  ]);
+  return { [res1]: result1, ...(res2 && { [res2]: result2 }) };
 };
 
-// API: Check which thumbnail resolutions are available
+const checkAllResolutions = async (videoId) => {
+  const resolutionPairs = [];
+  for (let i = 0; i < VALID_RESOLUTIONS.length; i += 2) {
+    resolutionPairs.push([
+      VALID_RESOLUTIONS[i],
+      VALID_RESOLUTIONS[i + 1]
+    ]);
+  }
+
+  const results = await Promise.all(
+    resolutionPairs.map(pair => checkResolutionPair(videoId, pair))
+  );
+
+  return Object.assign({}, ...results);
+};
+
+const downloadThumbnail = async (videoId, resolution) => {
+  if (!videoId) throw new Error('Invalid video ID');
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
+
+  try {
+    const { statusCode, body } = await request(`https://img.youtube.com/vi/${videoId}/${resolution}.jpg`, {
+      signal: controller.signal,
+      headers: { 
+        'User-Agent': 'YouTube-Thumbnail-Downloader/1.0',
+        'Accept': 'image/jpeg',
+        'Connection': 'keep-alive'
+      },
+      dispatcher: thumbnailAgent
+    });
+
+    if (statusCode !== 200) throw new Error(`Failed to fetch thumbnail (${statusCode})`);
+    return Readable.from(body);
+  } catch (error) {
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
+// API Routes
 fastify.post('/api/check-availability', async (request, reply) => {
   const { videoUrl } = request.body;
 
@@ -157,33 +180,6 @@ fastify.post('/api/check-availability', async (request, reply) => {
   }
 });
 
-// Download thumbnail stream with timeout handling
-const downloadThumbnail = async (videoId, resolution) => {
-  if (!videoId) throw new Error('Invalid video ID');
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 5000);
-
-  try {
-    const response = await fetch(`https://img.youtube.com/vi/${videoId}/${resolution}.jpg`, {
-      signal: controller.signal,
-      headers: { 'User-Agent': 'YouTube-Thumbnail-Downloader/1.0' }
-    });
-
-    clearTimeout(timeout);
-    
-    if (!response.ok) {
-      throw new Error(`Failed to fetch thumbnail (${response.status})`);
-    }
-
-    return Readable.fromWeb(response.body);
-  } catch (error) {
-    clearTimeout(timeout);
-    throw error;
-  }
-};
-
-// API: Download single thumbnail or ZIP of all available resolutions
 fastify.post('/api/download', async (request, reply) => {
   const { videoUrl, resolution, availabilityData } = request.body;
 
@@ -194,7 +190,6 @@ fastify.post('/api/download', async (request, reply) => {
   const videoId = getVideoId(videoUrl);
   let validResolutions;
 
-  
   if (availabilityData?.videoId === videoId) {
     validResolutions = Object.entries(availabilityData.availableResolutions)
       .filter(([_, available]) => available)
@@ -267,7 +262,14 @@ fastify.post('/api/download', async (request, reply) => {
   }
 });
 
-// Start server
+fastify.setNotFoundHandler((request, reply) => {
+  if (request.url.startsWith('/api/')) {
+    reply.code(404).send({ error: 'API endpoint not found' });
+    return;
+  }
+  reply.sendFile('index.html');
+});
+
 const start = async () => {
   try {
     await fastify.listen({ port: 3000, host: '0.0.0.0' });
@@ -277,5 +279,15 @@ const start = async () => {
     process.exit(1);
   }
 };
+
+process.on('SIGTERM', async () => {
+  await thumbnailAgent.close();
+  process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+  await thumbnailAgent.close();
+  process.exit(0);
+});
 
 start();
